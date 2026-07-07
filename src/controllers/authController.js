@@ -1,28 +1,37 @@
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import User from "../models/User.js";
+import logger from "../config/logger.js";
 
 export const register = async (req, res, next) => {
   try {
     const { name, email, password } = req.body;
 
-    const existingUser = await User.findOne({ where: { email } });
-    if (existingUser) {
+    const usuarioExistente = await User.findOne({ where: { email } });
+    if (usuarioExistente) {
+      logger.warn(`Intento de registro con email existente: ${email}`);
       return res.status(400).json({ error: "El email ya está registrado" });
     }
 
-    const hashedPassword = await bcrypt.hash(password, 10);
+    const passwordHash = await bcrypt.hash(password, 10);
 
-    const user = await User.create({
+    const nuevoUsuario = await User.create({
       name,
       email,
-      password: hashedPassword,
+      password: passwordHash,
     });
 
+    logger.info(`Nuevo usuario registrado: ${email}`);
+    
+    const io = req.app.get("io");
+    if (io) {
+      io.emit("user_event", { type: "register", userId: nuevoUsuario.id, timestamp: new Date() });
+    }
+
     res.status(201).json({
-      id: user.id,
-      name: user.name,
-      email: user.email,
+      id: nuevoUsuario.id,
+      name: nuevoUsuario.name,
+      email: nuevoUsuario.email,
     });
   } catch (error) {
     next(error);
@@ -33,30 +42,34 @@ export const login = async (req, res, next) => {
   try {
     const { email, password } = req.body;
 
-    const user = await User.findOne({ where: { email } });
+    const usuario = await User.findOne({ where: { email } });
 
-    if (!user) {
+    if (!usuario) {
+      logger.warn(`Intento de login fallido para email no existente: ${email}`);
       return res.status(401).json({ error: "Credenciales inválidas" });
     }
 
-    const passwordValid = await bcrypt.compare(password, user.password);
+    const passwordValida = await bcrypt.compare(password, usuario.password);
 
-    if (!passwordValid) {
+    if (!passwordValida) {
+      logger.warn(`Intento de login fallido por contraseña incorrecta: ${email}`);
       return res.status(401).json({ error: "Credenciales inválidas" });
     }
 
     const token = jwt.sign(
-      { id: user.id, email: user.email },
+      { id: usuario.id, email: usuario.email },
       process.env.JWT_SECRET,
       { expiresIn: "2h" },
     );
 
+    logger.info(`Login exitoso para usuario: ${email}`);
+
     res.status(200).json({
       token,
       user: {
-        id: user.id,
-        name: user.name,
-        email: user.email,
+        id: usuario.id,
+        name: usuario.name,
+        email: usuario.email,
       },
     });
   } catch (error) {
@@ -66,15 +79,15 @@ export const login = async (req, res, next) => {
 
 export const getProfile = async (req, res, next) => {
   try {
-    const user = await User.findByPk(req.user.id, {
+    const usuario = await User.findByPk(req.user.id, {
       attributes: ["id", "name", "email", "createdAt"],
     });
 
-    if (!user) {
+    if (!usuario) {
       return res.status(404).json({ error: "Usuario no encontrado" });
     }
 
-    res.status(200).json(user);
+    res.status(200).json(usuario);
   } catch (error) {
     next(error);
   }
@@ -84,38 +97,46 @@ export const updateProfile = async (req, res, next) => {
   try {
     const { name, password, currentPassword } = req.body;
 
-    const user = await User.findByPk(req.user.id);
+    const usuario = await User.findByPk(req.user.id);
 
-    if (!user) {
+    if (!usuario) {
       return res.status(404).json({ error: "Usuario no encontrado" });
     }
 
     if (password) {
-      const currentValid = await bcrypt.compare(
+      const passwordActualValida = await bcrypt.compare(
         currentPassword,
-        user.password,
+        usuario.password,
       );
 
-      if (!currentValid) {
+      if (!passwordActualValida) {
+        logger.warn(`Usuario ${usuario.email} intentó actualizar contraseña con currentPassword incorrecta`);
         return res
           .status(401)
           .json({ error: "La contraseña actual no es correcta" });
       }
 
-      user.password = await bcrypt.hash(password, 10);
+      usuario.password = await bcrypt.hash(password, 10);
     }
 
     if (name !== undefined) {
-      user.name = name;
+      usuario.name = name;
     }
 
-    await user.save();
+    await usuario.save();
+    
+    logger.info(`Perfil actualizado para usuario: ${usuario.email}`);
+
+    const io = req.app.get("io");
+    if (io) {
+      io.emit("user_event", { type: "update", userId: usuario.id, timestamp: new Date() });
+    }
 
     res.status(200).json({
-      id: user.id,
-      name: user.name,
-      email: user.email,
-      updatedAt: user.updatedAt,
+      id: usuario.id,
+      name: usuario.name,
+      email: usuario.email,
+      updatedAt: usuario.updatedAt,
     });
   } catch (error) {
     next(error);
@@ -124,13 +145,20 @@ export const updateProfile = async (req, res, next) => {
 
 export const deleteProfile = async (req, res, next) => {
   try {
-    const user = await User.findByPk(req.user.id);
+    const usuario = await User.findByPk(req.user.id);
 
-    if (!user) {
+    if (!usuario) {
       return res.status(404).json({ error: "Usuario no encontrado" });
     }
 
-    await user.destroy();
+    await usuario.destroy();
+    
+    logger.info(`Cuenta eliminada para usuario: ${usuario.email}`);
+
+    const io = req.app.get("io");
+    if (io) {
+      io.emit("user_event", { type: "delete", userId: usuario.id, timestamp: new Date() });
+    }
 
     res.status(200).json({ message: "Usuario eliminado correctamente" });
   } catch (error) {

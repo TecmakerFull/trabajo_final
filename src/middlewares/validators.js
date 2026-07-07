@@ -10,7 +10,7 @@ export const handleValidationErrors = (req, res, next) => {
   next();
 };
 
-export const registerRules = [
+export const reglasRegistro = [
   body("name").trim().notEmpty().withMessage("El nombre es requerido"),
   body("email")
     .trim()
@@ -27,7 +27,7 @@ export const registerRules = [
   handleValidationErrors,
 ];
 
-export const loginRules = [
+export const reglasLogin = [
   body("email")
     .trim()
     .normalizeEmail()
@@ -39,7 +39,7 @@ export const loginRules = [
   handleValidationErrors,
 ];
 
-export const updateProfileRules = [
+export const reglasActualizacion = [
   body("name")
     .optional()
     .trim()
